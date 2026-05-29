@@ -22,6 +22,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          show_full_output: true
           prompt: |
             Implement the OpenSpec change "${{ inputs.change_name }}":
             1. Run /opsx:apply ${{ inputs.change_name }} to implement all tasks
