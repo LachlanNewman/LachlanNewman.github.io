@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'openspec/changes/**'
+      - '!openspec/changes/archive/**'
 
 permissions:
   actions: write
@@ -20,7 +21,7 @@ jobs:
 
       - name: Detect change name and trigger implementation
         run: |
-          CHANGE_NAME=$(git diff HEAD~1 HEAD --name-only -- openspec/changes/ | awk -F'/' 'NF>=3{print $3}' | sort -u | head -1)
+          CHANGE_NAME=$(git diff HEAD~1 HEAD --name-only -- openspec/changes/ | awk -F'/' 'NF>=3 && $3 != "archive" {print $3}' | sort -u | head -1)
           if [ -z "$CHANGE_NAME" ]; then
             echo "No OpenSpec change detected in diff"
             exit 0
