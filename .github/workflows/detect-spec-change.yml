@@ -1,0 +1,31 @@
+name: Detect OpenSpec Change
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'openspec/changes/**'
+
+permissions:
+  actions: write
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect change name and trigger implementation
+        run: |
+          CHANGE_NAME=$(git diff HEAD~1 HEAD --name-only -- openspec/changes/ | awk -F'/' 'NF>=3{print $3}' | sort -u | head -1)
+          if [ -z "$CHANGE_NAME" ]; then
+            echo "No OpenSpec change detected in diff"
+            exit 0
+          fi
+          echo "Detected change: $CHANGE_NAME"
+          gh workflow run implement-spec.yml -f change_name="$CHANGE_NAME"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
