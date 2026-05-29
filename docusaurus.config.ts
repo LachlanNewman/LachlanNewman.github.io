@@ -9,8 +9,8 @@ const config: Config = {
     mermaid: true,
   },
   themes: ['@docusaurus/theme-mermaid'],
-  title: 'Lachlans Blog',
-  tagline: 'Dinosaurs are cool',
+  title: 'Lachlan Newman',
+  tagline: 'Lachlan Newman',
   favicon: 'img/favicon.ico',
   trailingSlash: false,
 
