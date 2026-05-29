@@ -1,0 +1,41 @@
+name: Implement OpenSpec Change
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'openspec/changes/**'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  implement:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect change name
+        id: detect
+        run: |
+          CHANGE_NAME=$(git diff HEAD~1 HEAD --name-only -- openspec/changes/ | awk -F'/' 'NF>=3{print $3}' | sort -u | head -1)
+          if [ -z "$CHANGE_NAME" ]; then
+            echo "No OpenSpec change detected in diff"
+            exit 1
+          fi
+          echo "Detected change: $CHANGE_NAME"
+          echo "change_name=$CHANGE_NAME" >> $GITHUB_OUTPUT
+
+      - name: Implement spec with Claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Implement the OpenSpec change "${{ steps.detect.outputs.change_name }}":
+            1. Run /opsx:apply ${{ steps.detect.outputs.change_name }} to implement all tasks
+            2. Run /opsx:archive ${{ steps.detect.outputs.change_name }} to archive the change
+            3. Create a PR against main with all implementation and archive changes
