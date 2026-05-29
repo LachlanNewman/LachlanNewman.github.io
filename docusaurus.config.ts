@@ -79,7 +79,8 @@ const config: Config = {
       title: 'My Site',
       logo: {
         alt: 'My Site Logo',
-        src: 'img/logo.svg',
+        src: 'img/me.jpeg',
+        style: {borderRadius: '50%'},
       },
       items: [
         {to: '/blog', label: 'Blog', position: 'left'},
