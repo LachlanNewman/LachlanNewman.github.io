@@ -21,7 +21,17 @@ The engine also had one critical non-functional requirement:
 
 ## High Level Design for Inheritance
 
-Settings are organized as a tree where child nodes inherit settings from their parent. For example, a `root.au` node inherits all settings from `root`, but can override any of them with its own values. Overrides only apply at the node where they are defined — sibling nodes are unaffected.
+Settings are organized as a tree where child nodes inherit settings from their parent. Overrides only apply at the node where they are defined — sibling nodes are unaffected.
+
+```mermaid
+flowchart TD
+    A[Global] --> B[Region]
+    A --> C[Region]
+    B --> D[Org]
+    B --> E[Org]
+    C --> F[Org]
+    C --> G[Org]
+```
 
 To satisfy the read performance requirement, inheritance is resolved at write time rather than read time. When a setting is written or overridden at any node, the engine computes the fully resolved value for that node and persists it directly. This means reads are simple lookups with no traversal or computation at query time. Since settings changes are rare in practice, the cost of resolving inheritance on writes is negligible.
 
@@ -30,6 +40,22 @@ In addition to node-level inheritance, settings can be further overridden by con
 ## Initial Design
 
 The initial design, proposed by a previous technical lead, allocated a dedicated MongoDB collection for each node in the settings tree. When a node was created, it would automatically inherit all settings from its parent node.
+
+Each node got its own collection, with settings stored as individual documents inside it:
+
+```json
+// collection: settings_root
+{ "_id": "show_critical_only", "value": false, "context": null }
+{ "_id": "theme", "value": "light", "context": null }
+
+// collection: settings_root_au
+{ "_id": "show_critical_only", "value": false, "context": null }
+{ "_id": "theme", "value": "light", "context": null }
+
+// collection: settings_root_us
+{ "_id": "show_critical_only", "value": false, "context": null }
+{ "_id": "theme", "value": "light", "context": null }
+```
 
 This approach had several significant drawbacks:
 
@@ -43,6 +69,33 @@ This approach had several significant drawbacks:
 
 The second design consolidated all per-node collections into a single MongoDB collection, where each node became a document. A document for the `root` node held all settings for the root node, and a document for `root.au` held all settings for the Australia node — inheriting from the `root` document above it.
 
+All nodes now lived in a single `settings` collection, with each node's full settings embedded as a sub-document. Each setting stored both its value and the node it was derived from:
+
+```json
+// collection: settings
+{
+  "_id": "root",
+  "settings": {
+    "show_critical_only": { "value": false, "derived_from": "root" },
+    "theme": { "value": "light", "derived_from": "root" }
+  }
+}
+{
+  "_id": "root.au",
+  "settings": {
+    "show_critical_only": { "value": false, "derived_from": "root" },
+    "theme": { "value": "light", "derived_from": "root" }
+  }
+}
+{
+  "_id": "root.us",
+  "settings": {
+    "show_critical_only": { "value": true, "derived_from": "root.us" },
+    "theme": { "value": "light", "derived_from": "root" }
+  }
+}
+```
+
 This resolved the collection sprawl problems but introduced new ones:
 
 - **Large documents** — because settings were embedded as a sub-document within each node document, the documents grew very large. MongoDB must load an entire document into memory before it can read or modify any field within it.
@@ -51,6 +104,19 @@ This resolved the collection sprawl problems but introduced new ones:
 ## Final Design
 
 The final design decomposed the data model further: instead of one document per node, we stored one document per setting per node. Each document contained a key field identifying the setting, making it directly queryable from the backend.
+
+Each setting for each node became its own document, with a compound index on `node` and `key` enabling direct lookups:
+
+```json
+// collection: settings
+{ "node": "root",    "key": "show_critical_only", "value": false, "derived_from": "root",    "context": null }
+{ "node": "root",    "key": "theme",              "value": "light", "derived_from": "root",  "context": null }
+{ "node": "root.au", "key": "show_critical_only", "value": false, "derived_from": "root",    "context": null }
+{ "node": "root.au", "key": "theme",              "value": "light", "derived_from": "root",  "context": null }
+{ "node": "root.au", "key": "show_critical_only", "value": true,  "derived_from": "root.au", "context": "emergency" }
+{ "node": "root.us", "key": "show_critical_only", "value": true,  "derived_from": "root.us", "context": null }
+{ "node": "root.us", "key": "theme",              "value": "light", "derived_from": "root",  "context": null }
+```
 
 This granularity unlocked efficient index-backed queries for the three core access patterns:
 
@@ -71,3 +137,14 @@ This became a problem when we needed to implement features tied to a specific ty
 Because the tree had no enforced structure, we could never reliably know what a given node *represented*. Implementing a feature for "organization-level" nodes meant working around the ambiguity of what level a node was actually at.
 
 In hindsight, unless truly infinite-depth flexibility is a hard requirement, I would opt for a fixed tree structure where each level has a defined type with its own schema and feature set. The flexibility of an unconstrained tree sounds appealing early on, but the implementation cost compounds quickly as the product grows.
+
+## DocumentDB vs MongoDB — The Biggest Gotcha
+
+We used MongoDB locally and AWS DocumentDB in production. AWS markets DocumentDB as a MongoDB-compatible drop-in replacement. In practice, it is not.
+
+- **Missing aggregation operators** — a significant number of MongoDB aggregation pipeline operators are simply not implemented in DocumentDB. Code that works perfectly in local development can fail in production the moment it hits an unsupported stage or expression.
+- **No distributed transactions** — MongoDB supports multi-document distributed transactions across replica sets. DocumentDB's transaction support is limited and does not cover the same ground, which becomes a real constraint when you need atomic writes across multiple documents.
+
+For a more detailed view of the compatiblity issues please see here (https://www.mongodb.com/resources/compare/documentdb-vs-mongodb/compatibility)
+
+**Yes, I acknowledge that MongoDB wrote this, but I have seen the issues that are listed in this comparison first hand.**
